@@ -1,79 +1,83 @@
 provider "aws" {
-  region     = "ap-south-1"
-  access_key = var.aws_access_key
-  secret_key = var.aws_secret_key
+  region = "ap-south-1"  # AWS Mumbai region
 }
 
-resource "aws_instance" "react_ec2" {
-  ami           = "ami-0a7cf821b91bcccbc" # Ubuntu 22.04 LTS (Mumbai)
-  instance_type = "t2.micro"
-  key_name      = devops  # Use variable for key name
-  security_groups = [aws_security_group.ec2_sg.name]
-
-  user_data = <<-EOF
-    #!/bin/bash
-    # Update system packages
-    sudo apt update -y && sudo apt upgrade -y
-
-    # Install Java (OpenJDK 11)
-    sudo apt install -y openjdk-11-jdk
-
-    # Install Docker
-    sudo apt install -y docker.io
-    sudo systemctl start docker
-    sudo systemctl enable docker
-    sudo usermod -aG docker ubuntu
-
-    # Install Git
-    sudo apt install -y git
-
-    # Install Jenkins Agent dependencies
-    sudo apt install -y wget
-
-    # Verify installations
-    java -version
-    docker --version
-    git --version
-  EOF
-
-  tags = {
-    Name = "Jenkins-Slave-Server-Ubuntu"
-  }
+# Fetch the default VPC ID dynamically
+data "aws_vpc" "default" {
+  default = true
 }
 
-resource "aws_security_group" "ec2_sg" {
-  name        = "react-security-group"
-  description = "Allow inbound access"
-
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    from_port   = 3000
-    to_port     = 3000
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+# Create a new Security Group if needed
+resource "aws_security_group" "web_sg" {
+  name        = "web-server-sg-${terraform.workspace}"  # Unique name to avoid conflicts
+  description = "Allow SSH, HTTP, and HTTPS traffic"
+  vpc_id      = data.aws_vpc.default.id  # Use default VPC
 
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]  # Allow SSH access
+    cidr_blocks = ["0.0.0.0/0"]  # Restrict to your IP for security
+  }
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]  # Allow HTTP from anywhere
+  }
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]  # Allow HTTPS from anywhere
   }
 
   egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["0.0.0.0/0"]  # Allow all outbound traffic
   }
 }
 
-variable "aws_access_key" {}
-variable "aws_secret_key" {}
-variable "key_name" {}
+# EC2 Instance for Web Server
+resource "aws_instance" "web_server100" {
+  ami             = "ami-03f4878755434977f"  # Ubuntu 22.04 AMI for ap-south-1
+  instance_type   = "t2.micro"
+  key_name        = "jeeva12"  # Replace with your actual key pair name
+  security_groups = [aws_security_group.web_sg.name]  # Attach security group
+
+  user_data = <<-EOF
+              #!/bin/bash
+              sudo apt update -y
+              
+              # Install OpenJDK 11
+              sudo apt install -y openjdk-11-jdk
+
+              # Verify Java installation
+              java -version | tee /home/ubuntu/java_version.txt
+
+              # Install Docker
+              sudo apt install -y docker.io
+              sudo systemctl start docker
+              sudo systemctl enable docker
+              sudo usermod -aG docker ubuntu
+
+              # Verify Docker installation
+              docker --version | tee /home/ubuntu/docker_version.txt
+
+              # Run Nginx in Docker
+              sudo docker run -d -p 80:80 nginx
+              EOF
+
+  tags = {
+    Name = "web server"
+  }
+}
+
+# Output the Public IP of the EC2 Instance
+output "public_ip" {
+  value = aws_instance.web_server100.public_ip
+}
